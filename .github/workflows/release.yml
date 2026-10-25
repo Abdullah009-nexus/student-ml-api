@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Run tests
+        run: pytest
+
+  publish:
+    name: Build and publish image
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Derive version from git tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and tag Docker image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/student-ml-api"
+          docker build \
+            --build-arg APP_VERSION="${{ steps.version.outputs.version }}" \
+            --build-arg GIT_COMMIT="${GITHUB_SHA}" \
+            --build-arg GIT_REPO="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "${IMAGE}:${{ steps.version.outputs.version }}" \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:${{ steps.version.outputs.short_sha }}" \
+            .
+
+      - name: Push version, latest, and commit tags
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/student-ml-api"
+          docker push "${IMAGE}:${{ steps.version.outputs.version }}"
+          docker push "${IMAGE}:latest"
+          docker push "${IMAGE}:${{ steps.version.outputs.short_sha }}"
